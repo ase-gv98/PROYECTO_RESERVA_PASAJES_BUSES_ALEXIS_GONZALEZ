@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+
+{% block title %}Panel Admin | Reservas Interurbanas{% endblock %}
+
+{% block content %}
+<section class="container py-5">
+    <div class="page-panel rounded-4 p-4 p-lg-5">
+        <div class="d-flex flex-wrap justify-content-between align-items-end gap-3 mb-4">
+            <div>
+                <p class="text-uppercase small fw-semibold text-primary mb-2">Administracion de flota</p>
+                <h1 class="h2 mb-1">Panel Admin</h1>
+                <p class="text-secondary mb-0">Resumen operativo de ventas y servicios.</p>
+            </div>
+            <span class="badge text-bg-dark">Acceso administrativo</span>
+        </div>
+
+        <div class="row g-4 mb-5">
+            <div class="col-md-4">
+                <article class="card ticket-card h-100">
+                    <div class="card-body">
+                        <p class="text-uppercase small fw-semibold text-secondary mb-2">Servicios activos</p>
+                        <p class="display-6 fw-bold mb-0">{{ servicios_activos }}</p>
+                        <p class="text-secondary mb-0">Salidas futuras disponibles</p>
+                    </div>
+                </article>
+            </div>
+            <div class="col-md-4">
+                <article class="card ticket-card h-100">
+                    <div class="card-body">
+                        <p class="text-uppercase small fw-semibold text-secondary mb-2">Pasajes vendidos</p>
+                        <p class="display-6 fw-bold mb-0">{{ pasajes_vendidos }}</p>
+                        <p class="text-secondary mb-0">Boletos con pago confirmado</p>
+                    </div>
+                </article>
+            </div>
+            <div class="col-md-4">
+                <article class="card ticket-card h-100">
+                    <div class="card-body">
+                        <p class="text-uppercase small fw-semibold text-secondary mb-2">Monto recaudado total</p>
+                        <p class="display-6 fw-bold mb-0">${{ monto_recaudado|floatformat:0 }}</p>
+                        <p class="text-secondary mb-0">Ventas en estado pagado</p>
+                    </div>
+                </article>
+            </div>
+        </div>
+
+        <div>
+            <h2 class="h5 mb-3">Accesos rápidos</h2>
+            <div class="d-flex flex-wrap gap-3">
+                <a class="btn btn-warning" href="/api/schema/swagger-ui/" target="_blank" rel="noopener">Documentación API (Swagger)</a>
+                <a class="btn btn-dark" href="/admin/">Panel de Control Django</a>
+            </div>
+        </div>
+    </div>
+</section>
+{% endblock %}

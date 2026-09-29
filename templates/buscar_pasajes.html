@@ -1,0 +1,274 @@
+{% extends "base.html" %}
+
+{% block title %}Buscar pasajes | Reservas Interurbanas{% endblock %}
+
+{% block content %}
+<section class="hero py-5">
+    <div class="container">
+        <p class="text-uppercase small fw-semibold mb-2">Viaja mejor</p>
+        <h1 class="display-6 fw-bold">Busca tu proximo pasaje</h1>
+        <p class="lead mb-0">Consulta horarios, tarifas y disponibilidad en tiempo real.</p>
+    </div>
+</section>
+<section class="container py-4">
+    <form id="search-form" class="card search-panel p-4 mb-4">
+        <div class="row g-3 align-items-end">
+            <div class="col-md-3"><label class="form-label" for="origen">Origen</label><select class="form-select" id="origen" name="origen"><option value="">Todos los orígenes</option></select></div>
+            <div class="col-md-3"><label class="form-label" for="destino">Destino</label><select class="form-select" id="destino" name="destino" disabled><option value="">Todos los destinos</option></select></div>
+            <div class="col-md-3"><label class="form-label" for="fecha_salida">Fecha</label><input class="form-control" type="date" id="fecha_salida" name="fecha_salida"></div>
+            <div class="col-md-3"><button class="btn btn-primary w-100" type="submit">Buscar</button></div>
+        </div>
+    </form>
+    <div id="search-message" class="alert d-none" role="alert"></div>
+    <div id="results" class="row g-4" aria-live="polite"></div>
+</section>
+
+<div class="modal fade" id="seats-modal" tabindex="-1" aria-labelledby="seats-title" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <form id="seat-form" class="modal-content">
+            <div class="modal-header"><div><h2 id="seats-title" class="modal-title h5 mb-1">Selecciona tu asiento</h2><p id="seat-service" class="small text-secondary mb-0"></p></div><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button></div>
+            <div class="modal-body">
+                <div class="d-flex gap-3 small mb-3"><span><span class="badge text-bg-success">Disponible</span></span><span><span class="badge text-bg-secondary">Ocupado</span></span></div>
+                <div id="seat-grid" class="seat-grid" aria-live="polite"></div>
+                <div id="seat-message" class="alert d-none mt-3 mb-0" role="alert"></div>
+                <input type="hidden" id="selected-seat" name="numero_asiento">
+                <input type="hidden" id="selected-service" name="servicio">
+                <div class="row g-2 mt-3">
+                    <div class="col-md-6"><label class="form-label" for="seat-passenger">Nombre pasajero</label><input class="form-control" id="seat-passenger" name="pasajero_nombre" required></div>
+                    <div class="col-md-6"><label class="form-label" for="seat-rut">RUT</label><input class="form-control" id="seat-rut" name="pasajero_rut" inputmode="numeric" autocomplete="off" required><div id="rut-message" class="invalid-feedback"></div></div>
+                </div>
+            </div>
+            <div class="modal-footer"><button class="btn btn-primary" type="submit">Agregar al carro</button></div>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(() => {
+    const form = document.querySelector('#search-form');
+    const results = document.querySelector('#results');
+    const message = document.querySelector('#search-message');
+    const originSelect = document.querySelector('#origen');
+    const destinationSelect = document.querySelector('#destino');
+    const passengerNameInput = document.querySelector('#seat-passenger');
+    const rutInput = document.querySelector('#seat-rut');
+    const rutMessage = document.querySelector('#rut-message');
+    const token = () => localStorage.getItem('access') || localStorage.getItem('access_token');
+    let services = [];
+
+    function showMessage(text, type = 'danger') {
+        message.textContent = text;
+        message.className = `alert alert-${type}`;
+    }
+
+    function renderServices(services) {
+        results.innerHTML = '';
+        if (!services.length) {
+            showMessage('No encontramos servicios con esos filtros.', 'info');
+            return;
+        }
+        services.forEach(service => {
+            const col = document.createElement('div');
+            col.className = 'col-md-6 col-xl-4';
+            col.innerHTML = `
+                <article class="card h-100 ticket-card">
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between gap-3 mb-3">
+                            <h2 class="h5 mb-0">${service.origen} - ${service.destino}</h2>
+                            <span class="badge text-bg-primary">#${service.id}</span>
+                        </div>
+                        <p class="text-secondary mb-2">Salida: ${new Date(service.fecha_hora_salida).toLocaleString('es-CL')}</p>
+                        <p class="mb-1">Semicama: <strong>$${service.tarifa_semicama}</strong></p>
+                        <p class="mb-0">Cama: <strong>$${service.tarifa_cama}</strong></p>
+                    </div>
+                    <div class="card-footer bg-white border-0 pb-3">
+                        <button class="btn btn-outline-primary btn-sm" type="button" data-id="${service.id}" data-service-name="${service.origen} - ${service.destino}">Ver asientos</button>
+                    </div>
+                </article>`;
+            results.appendChild(col);
+        });
+        results.querySelectorAll('[data-id]').forEach(button => button.addEventListener('click', () => openSeats(button.dataset.id, button.dataset.serviceName)));
+    }
+
+    function setOptions(select, values, emptyLabel) {
+        select.innerHTML = `<option value="">${emptyLabel}</option>`;
+        [...new Set(values)].sort((left, right) => left.localeCompare(right, 'es')).forEach(value => {
+            const option = document.createElement('option');
+            option.value = value;
+            option.textContent = value;
+            select.appendChild(option);
+        });
+    }
+
+    function updateDestinations() {
+        const selectedOrigin = originSelect.value;
+        const destinations = services
+            .filter(service => !selectedOrigin || service.origen === selectedOrigin)
+            .map(service => service.destino);
+        setOptions(destinationSelect, destinations, 'Todos los destinos');
+        destinationSelect.disabled = !selectedOrigin;
+    }
+
+    function populateFilters() {
+        setOptions(originSelect, services.map(service => service.origen), 'Todos los orígenes');
+        updateDestinations();
+    }
+
+    function normalizeRut(value) {
+        const clean = String(value || '').replace(/[.\s-]/g, '').toUpperCase();
+        if (clean.length < 2) return clean;
+        const body = clean.slice(0, -1).replace(/\D/g, '');
+        const verifier = clean.slice(-1).replace(/[^0-9K]/g, '');
+        return body && verifier ? `${body}-${verifier}` : body;
+    }
+
+    function sanitizeRut(value) {
+        return String(value || '')
+            .replace(/[.\s-]/g, '')
+            .toUpperCase()
+            .replace(/[^0-9K]/g, '');
+    }
+
+    function calculateRutVerifier(body) {
+        let factor = 2;
+        let sum = 0;
+        for (let index = body.length - 1; index >= 0; index -= 1) {
+            sum += Number(body[index]) * factor;
+            factor = factor === 7 ? 2 : factor + 1;
+        }
+        const remainder = 11 - (sum % 11);
+        return remainder === 11 ? '0' : remainder === 10 ? 'K' : String(remainder);
+    }
+
+    function validateRut(showMessage = true) {
+        const normalized = normalizeRut(rutInput.value);
+        rutInput.value = normalized;
+        const match = normalized.match(/^(\d{1,8})-([0-9K])$/);
+        const valid = Boolean(match && calculateRutVerifier(match[1]) === match[2]);
+        rutInput.classList.toggle('is-invalid', showMessage && !valid);
+        rutInput.classList.toggle('is-valid', valid);
+        rutMessage.textContent = valid || !showMessage ? '' : 'Ingresa un RUT chileno válido, por ejemplo 12345678-K.';
+        return valid;
+    }
+
+    async function openSeats(serviceId, serviceName) {
+        document.querySelector('#seat-service').textContent = `${serviceName} | Servicio #${serviceId}`;
+        passengerNameInput.value = '';
+        rutInput.value = '';
+        rutInput.classList.remove('is-valid', 'is-invalid');
+        rutMessage.textContent = '';
+        document.querySelector('#selected-service').value = serviceId;
+        document.querySelector('#selected-seat').value = '';
+        document.querySelector('#seat-message').className = 'alert d-none mt-3 mb-0';
+        document.querySelector('#seat-grid').innerHTML = '<p class="text-secondary">Cargando asientos...</p>';
+        bootstrap.Modal.getOrCreateInstance(document.querySelector('#seats-modal')).show();
+        try {
+            const response = await fetch(`/api/servicios/${serviceId}/asientos/`);
+            if (!response.ok) throw new Error('No fue posible cargar los asientos.');
+            const payload = await response.json();
+            const seats = Array.isArray(payload) ? payload : payload.results || payload.asientos || [];
+            const grid = document.querySelector('#seat-grid');
+            grid.innerHTML = '';
+            if (!seats.length) {
+                grid.innerHTML = '<div class="alert alert-warning mb-0">Este servicio no tiene asientos configurados.</div>';
+                return;
+            }
+            seats.forEach(seat => {
+                if (!seat || seat.numero_asiento == null) return;
+                const button = document.createElement('button');
+                button.type = 'button';
+                button.className = `btn ${seat.estado === 'OCUPADO' ? 'btn-secondary' : 'btn-success'} seat-button`;
+                button.disabled = seat.estado === 'OCUPADO';
+                button.dataset.seat = seat.numero_asiento;
+                button.innerHTML = `<strong>${seat.numero_asiento}</strong><small class="d-block">${seat.tipo === 'CAMA' ? 'Cama' : 'Semicama'}</small>`;
+                button.addEventListener('click', () => {
+                    document.querySelectorAll('.seat-button').forEach(item => item.classList.remove('border-primary', 'border-3'));
+                    button.classList.add('border-primary', 'border-3');
+                    document.querySelector('#selected-seat').value = seat.numero_asiento;
+                });
+                document.querySelector('#seat-grid').appendChild(button);
+            });
+        } catch (error) {
+            document.querySelector('#seat-grid').innerHTML = `<div class="alert alert-danger mb-0">${error.message}</div>`;
+        }
+    }
+
+    document.querySelector('#seat-form').addEventListener('submit', async event => {
+        event.preventDefault();
+        const tokenValue = token();
+        const messageNode = document.querySelector('#seat-message');
+        if (!tokenValue) { setSeatMessage('Inicia sesión para agregar un asiento al carro.'); return; }
+        if (!document.querySelector('#selected-seat').value) { setSeatMessage('Selecciona un asiento disponible.'); return; }
+        if (!validateRut(true)) { setSeatMessage('Corrige el RUT antes de agregar el asiento.'); rutInput.focus(); return; }
+        try {
+            const response = await fetch('/api/carro-pasajes/', { method: 'POST', headers: { Authorization: `Bearer ${tokenValue}`, 'Content-Type': 'application/json' }, body: JSON.stringify(Object.fromEntries(new FormData(event.currentTarget))) });
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.detail || 'No fue posible agregar el asiento.');
+            messageNode.textContent = 'Asiento agregado. Puedes pagar desde el carro.';
+            messageNode.className = 'alert alert-success mt-3 mb-0';
+            passengerNameInput.value = '';
+            rutInput.value = '';
+            rutInput.classList.remove('is-valid', 'is-invalid');
+            rutMessage.textContent = '';
+            bootstrap.Modal.getOrCreateInstance(document.querySelector('#seats-modal')).hide();
+            window.dispatchEvent(new CustomEvent('cart:updated'));
+        } catch (error) { setSeatMessage(error.message); }
+    });
+
+    rutInput.addEventListener('input', () => {
+        const sanitized = sanitizeRut(rutInput.value);
+        rutInput.value = sanitized.length === 9 ? normalizeRut(sanitized) : sanitized;
+        if (sanitized.length === 9) validateRut(true);
+        else {
+            rutInput.classList.remove('is-valid', 'is-invalid');
+            rutMessage.textContent = '';
+        }
+    });
+    rutInput.addEventListener('blur', () => validateRut(true));
+
+    function setSeatMessage(text) {
+        const messageNode = document.querySelector('#seat-message');
+        messageNode.textContent = text;
+        messageNode.className = 'alert alert-danger mt-3 mb-0';
+    }
+
+    async function loadServices() {
+        results.innerHTML = '<div class="col-12"><p class="text-secondary">Cargando servicios...</p></div>';
+        try {
+            const response = await fetch('/api/servicios/');
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.detail || 'No fue posible cargar los servicios.');
+            services = Array.isArray(data) ? data : data.results || [];
+            populateFilters();
+            renderServices(services);
+        } catch (error) {
+            results.innerHTML = '';
+            showMessage(error.message);
+        }
+    }
+
+    async function search(event) {
+        event.preventDefault();
+        const params = new URLSearchParams(new FormData(form));
+        for (const [key, value] of [...params.entries()]) if (!value) params.delete(key);
+        results.innerHTML = '<div class="col-12"><p class="text-secondary">Consultando servicios...</p></div>';
+        message.className = 'alert d-none';
+        const headers = token() ? { Authorization: `Bearer ${token()}` } : {};
+        try {
+            const response = await fetch(`/api/servicios/?${params}`, { headers });
+            if (!response.ok) throw new Error('No fue posible consultar los servicios.');
+            renderServices(await response.json());
+        } catch (error) {
+            results.innerHTML = '';
+            showMessage(error.message);
+        }
+    }
+
+    originSelect.addEventListener('change', updateDestinations);
+    form.addEventListener('submit', search);
+    loadServices();
+})();
+</script>
+{% endblock %}

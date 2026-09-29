@@ -1,0 +1,163 @@
+{% extends "base.html" %}
+
+{% block title %}Mis boletos | Reservas Interurbanas{% endblock %}
+
+{% block content %}
+<section class="container py-5 page-panel rounded-4">
+    <p class="text-uppercase small fw-semibold text-primary mb-2">Tu historial</p>
+    <h1 class="h2 mb-1">Mis boletos</h1>
+    <p class="text-secondary mb-4">Aqui encontraras tus pasajes pagados, pendientes y guardados en el carro.</p>
+    <div id="tickets-message" class="alert d-none" role="alert"></div>
+    <div id="tickets" class="row g-4" aria-live="polite"></div>
+
+    <div class="row g-4 mt-2">
+        <div id="anular-pasaje" class="col-lg-6">
+            <form id="cancel-ticket-form" class="card ticket-card h-100 p-4">
+                <h2 class="h5">Anular pasaje</h2>
+                <label class="form-label" for="cancel-ticket-select">Selecciona el pasaje comprado</label>
+                <select id="cancel-ticket-select" class="form-select mb-3" required>
+                    <option value="">Selecciona un boleto pagado</option>
+                </select>
+                <button class="btn btn-outline-danger" type="submit">Anular pasaje</button>
+            </form>
+        </div>
+        <div id="cambiar-pasaje" class="col-lg-6">
+            <form id="change-ticket-form" class="card ticket-card h-100 p-4">
+                <h2 class="h5">Cambiar pasaje</h2>
+                <label class="form-label" for="change-ticket-select">Pasaje comprado</label>
+                <select id="change-ticket-select" class="form-select mb-3" required>
+                    <option value="">Selecciona un boleto pagado</option>
+                </select>
+                <label class="form-label" for="new-seat-select">Nuevo asiento del mismo servicio</label>
+                <select id="new-seat-select" class="form-select mb-3" required disabled>
+                    <option value="">Primero selecciona un pasaje</option>
+                </select>
+                <button class="btn btn-outline-primary" type="submit">Cambiar pasaje</button>
+            </form>
+        </div>
+    </div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(() => {
+    const token = localStorage.getItem('access') || localStorage.getItem('access_token');
+    const tickets = document.querySelector('#tickets');
+    const message = document.querySelector('#tickets-message');
+    const cancelSelect = document.querySelector('#cancel-ticket-select');
+    const changeSelect = document.querySelector('#change-ticket-select');
+    const newSeatSelect = document.querySelector('#new-seat-select');
+    let paidTickets = [];
+
+    function notify(text, type = 'danger') {
+        message.textContent = text;
+        message.className = `alert alert-${type}`;
+    }
+
+    function ticketLabel(ticket) {
+        return `Boleto #${ticket.id} | Servicio #${ticket.servicio} | Asiento ${ticket.numero_asiento}`;
+    }
+
+    function fillTicketSelect(select) {
+        select.innerHTML = '<option value="">Selecciona un boleto pagado</option>';
+        paidTickets.forEach(ticket => {
+            const option = document.createElement('option');
+            option.value = ticket.id;
+            option.textContent = ticketLabel(ticket);
+            select.appendChild(option);
+        });
+        select.disabled = !paidTickets.length;
+    }
+
+    async function loadSeatsForTicket(ticketId) {
+        const ticket = paidTickets.find(item => String(item.id) === String(ticketId));
+        newSeatSelect.innerHTML = '<option value="">Cargando asientos...</option>';
+        newSeatSelect.disabled = true;
+        if (!ticket) return;
+
+        try {
+            const response = await fetch(`/api/servicios/${ticket.servicio}/asientos/`);
+            const payload = await response.json();
+            if (!response.ok) throw new Error(payload.detail || 'No fue posible cargar los asientos.');
+            const seats = Array.isArray(payload) ? payload : payload.results || payload.asientos || [];
+            const availableSeats = seats.filter(seat => (
+                seat.estado === 'DISPONIBLE' && seat.numero_asiento !== ticket.numero_asiento
+            ));
+            newSeatSelect.innerHTML = '<option value="">Selecciona un nuevo asiento</option>';
+            availableSeats.forEach(seat => {
+                const option = document.createElement('option');
+                option.value = seat.id;
+                option.textContent = `Asiento ${seat.numero_asiento} - ${seat.tipo === 'CAMA' ? 'Cama' : 'Semicama'}`;
+                newSeatSelect.appendChild(option);
+            });
+            newSeatSelect.disabled = !availableSeats.length;
+            if (!availableSeats.length) notify('No hay asientos disponibles para cambiar este pasaje.', 'info');
+        } catch (error) {
+            newSeatSelect.innerHTML = '<option value="">No se pudieron cargar los asientos</option>';
+            notify(error.message);
+        }
+    }
+
+    async function loadTickets() {
+        if (!token) { notify('Inicia sesion para consultar tus boletos.'); return; }
+        try {
+            const response = await fetch('/api/mis-boletos/', { headers: { Authorization: `Bearer ${token}` } });
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.detail || 'No fue posible cargar tus boletos.');
+            if (!data.length) { notify('Todavia no tienes pasajes ni reservas en el carro.', 'info'); return; }
+            paidTickets = data.filter(ticket => ticket.estado === 'PAGADO');
+            fillTicketSelect(cancelSelect);
+            fillTicketSelect(changeSelect);
+            tickets.innerHTML = data.map(ticket => {
+                const state = ticket.estado || 'PENDIENTE';
+                const badge = state === 'PAGADO' ? 'success' : state === 'EN_CARRO' ? 'primary' : state === 'CANCELADO' ? 'danger' : 'warning';
+                return `<div class="col-md-6 col-xl-4"><article class="card ticket-card h-100"><div class="card-body"><span class="badge text-bg-${badge} mb-3">${state}</span><h2 class="h5">Servicio #${ticket.servicio}</h2><p class="mb-1">Asiento ${ticket.numero_asiento}</p><p class="mb-1">${ticket.pasajero_nombre}</p><p class="text-secondary mb-2">RUT: ${ticket.pasajero_rut}</p><strong>$${ticket.precio}</strong></div></article></div>`;
+            }).join('');
+        } catch (error) { notify(error.message); }
+    }
+
+    cancelSelect.addEventListener('change', () => {
+        document.querySelector('#cancel-ticket-form button').disabled = !cancelSelect.value;
+    });
+
+    changeSelect.addEventListener('change', () => loadSeatsForTicket(changeSelect.value));
+
+    document.querySelector('#cancel-ticket-form').addEventListener('submit', async event => {
+        event.preventDefault();
+        if (!cancelSelect.value) return;
+        try {
+            const response = await fetch(`/api/boletos/${cancelSelect.value}/anular/`, {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${token}` },
+            });
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.detail || 'No fue posible anular el pasaje.');
+            notify('Pasaje anulado y asiento liberado.', 'success');
+            await loadTickets();
+        } catch (error) { notify(error.message); }
+    });
+
+    document.querySelector('#change-ticket-form').addEventListener('submit', async event => {
+        event.preventDefault();
+        if (!changeSelect.value || !newSeatSelect.value) return;
+        try {
+            const response = await fetch(`/api/boletos/${changeSelect.value}/cambiar/`, {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ nuevo_asiento_id: Number(newSeatSelect.value) }),
+            });
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.detail || 'No fue posible cambiar el pasaje.');
+            notify('Pasaje cambiado correctamente.', 'success');
+            await loadTickets();
+            changeSelect.value = '';
+            newSeatSelect.innerHTML = '<option value="">Primero selecciona un pasaje</option>';
+            newSeatSelect.disabled = true;
+        } catch (error) { notify(error.message); }
+    });
+
+    loadTickets();
+})();
+</script>
+{% endblock %}

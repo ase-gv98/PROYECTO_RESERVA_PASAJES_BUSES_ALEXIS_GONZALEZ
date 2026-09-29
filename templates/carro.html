@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+
+{% block title %}Mi carro | Reservas Interurbanas{% endblock %}
+
+{% block content %}
+<section class="container py-5 page-panel rounded-4">
+    <div class="d-flex flex-wrap justify-content-between align-items-end gap-3 mb-4">
+        <div><p class="text-uppercase small fw-semibold text-primary mb-2">Compra segura</p><h1 class="h2 mb-1">Mi carro de pasajes</h1><p class="text-secondary mb-0">Tus asientos quedan reservados en el carro hasta confirmar el pago.</p></div>
+        <button id="checkout-button" class="btn btn-primary">Pagar</button>
+    </div>
+    <div id="cart-message" class="alert d-none" role="alert"></div>
+    <div id="cart-items" class="row g-3" aria-live="polite"></div>
+    <form id="add-item-form" class="card search-panel p-4 mt-4">
+        <h2 class="h5">Agregar pasajero</h2>
+        <div class="row g-3">
+            <div class="col-md-2"><label class="form-label" for="service-id">Servicio</label><input class="form-control" id="service-id" name="servicio" type="number" required></div>
+            <div class="col-md-2"><label class="form-label" for="seat-number">Asiento</label><input class="form-control" id="seat-number" name="numero_asiento" type="number" min="1" required></div>
+            <div class="col-md-3"><label class="form-label" for="passenger-name">Nombre</label><input class="form-control" id="passenger-name" name="pasajero_nombre" required></div>
+            <div class="col-md-3"><label class="form-label" for="passenger-rut">RUT</label><input class="form-control" id="passenger-rut" name="pasajero_rut" required></div>
+            <div class="col-md-2 d-flex align-items-end"><button class="btn btn-outline-primary w-100" type="submit">Agregar</button></div>
+        </div>
+    </form>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(() => {
+    const token = localStorage.getItem('access') || localStorage.getItem('access_token');
+    const itemsNode = document.querySelector('#cart-items');
+    const message = document.querySelector('#cart-message');
+    const authHeaders = () => token ? { Authorization: `Bearer ${token}` } : {};
+
+    function notify(text, type = 'danger') {
+        message.textContent = text;
+        message.className = `alert alert-${type}`;
+    }
+
+    function render(cart) {
+        itemsNode.innerHTML = '';
+        if (!cart.items.length) {
+            itemsNode.innerHTML = '<div class="col-12"><div class="alert alert-info">Tu carro esta vacio.</div></div>';
+            return;
+        }
+        cart.items.forEach(item => {
+            const col = document.createElement('div');
+            col.className = 'col-md-6 col-xl-4';
+            col.innerHTML = `<article class="card ticket-card h-100"><div class="card-body"><p class="small text-secondary mb-2">Servicio #${item.servicio}</p><h2 class="h5">Asiento ${item.numero_asiento}</h2><p class="mb-1">${item.pasajero_nombre}</p><p class="text-secondary mb-3">RUT: ${item.pasajero_rut}</p><button class="btn btn-sm btn-outline-danger" data-remove="${item.id}">Quitar</button></div></article>`;
+            itemsNode.appendChild(col);
+        });
+        itemsNode.querySelectorAll('[data-remove]').forEach(button => button.addEventListener('click', () => removeItem(button.dataset.remove)));
+    }
+
+    async function loadCart() {
+        if (!token) { notify('Inicia sesion para consultar tu carro.'); return; }
+        try {
+            const response = await fetch('/api/carro-pasajes/', { headers: authHeaders() });
+            if (!response.ok) throw new Error('No fue posible cargar el carro.');
+            render(await response.json());
+        } catch (error) { notify(error.message); }
+    }
+
+    async function addItem(event) {
+        event.preventDefault();
+        if (!token) { notify('Inicia sesion para agregar pasajes.'); return; }
+        const form = event.currentTarget;
+        try {
+            const response = await fetch('/api/carro-pasajes/', { method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify(Object.fromEntries(new FormData(form))) });
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.detail || 'No fue posible agregar el asiento.');
+            form.reset();
+            notify('Pasaje agregado al carro.', 'success');
+            await loadCart();
+        } catch (error) { notify(error.message); }
+    }
+
+    async function removeItem(itemId) {
+        try {
+            const response = await fetch('/api/carro-pasajes/', { method: 'DELETE', headers: { ...authHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify({ item_id: itemId }) });
+            if (!response.ok) throw new Error('No fue posible quitar el item.');
+            await loadCart();
+        } catch (error) { notify(error.message); }
+    }
+
+    document.querySelector('#add-item-form').addEventListener('submit', addItem);
+    document.querySelector('#checkout-button').addEventListener('click', async () => {
+        const response = await fetch('/api/ventas/checkout/', { method: 'POST', headers: authHeaders() });
+        const data = await response.json();
+        if (!response.ok) { notify(data.detail || 'No fue posible confirmar la compra.'); return; }
+        notify('¡Pago exitoso y pasaje emitido!', 'success');
+        await loadCart();
+    });
+    loadCart();
+})();
+</script>
+{% endblock %}
